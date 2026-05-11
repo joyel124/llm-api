@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>LLM UPC</title>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#0e0e12;--surface:#16161d;--surface2:#1d1d27;
+  --border:#272733;--border2:#32323f;
+  --accent:#5b8def;--accent2:#7c6ef0;
+  --text:#e8e8f0;--muted:#6b6b80;--muted2:#45455a;
+  --user-bg:#1a1f30;--danger:#f06060;
+  --font:'Sora',sans-serif;--mono:'JetBrains Mono',monospace;
+  --radius:14px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;}
+#app{display:flex;height:100vh;}
+
+/* ── Sidebar ── */
+#sidebar{
+  width:260px;min-width:260px;background:var(--surface);
+  border-right:1px solid var(--border);display:flex;flex-direction:column;
+}
+#sidebar-header{
+  padding:18px 16px 14px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;
+}
+.logo-mark{
+  width:32px;height:32px;border-radius:9px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0;
+}
+.logo-text{font-size:.95rem;font-weight:600;letter-spacing:-.01em;}
+.logo-sub{font-size:.67rem;color:var(--muted);}
+
+#new-chat-btn{
+  margin:12px 12px 8px;
+  background:var(--surface2);border:1px solid var(--border2);
+  color:var(--text);font-family:var(--font);font-size:.8rem;font-weight:500;
+  border-radius:10px;padding:9px 13px;cursor:pointer;
+  display:flex;align-items:center;gap:8px;transition:all .15s;
+}
+#new-chat-btn:hover{border-color:var(--accent);background:rgba(91,141,239,.08);}
+
+/* Sidebar sections */
+.sb-section{padding:10px 12px;border-bottom:1px solid var(--border);}
+.sb-label{font-size:.65rem;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;}
+#model-select{
+  width:100%;background:var(--surface2);border:1px solid var(--border2);
+  color:var(--text);font-family:var(--font);font-size:.77rem;
+  border-radius:8px;padding:7px 9px;cursor:pointer;outline:none;
+}
+#model-select:focus{border-color:var(--accent);}
+#system-input{
+  width:100%;background:var(--surface2);border:1px solid var(--border2);
+  color:var(--text);font-family:var(--font);font-size:.76rem;
+  border-radius:8px;padding:7px 9px;resize:vertical;min-height:64px;outline:none;line-height:1.5;
+}
+#system-input::placeholder{color:var(--muted2);}
+#system-input:focus{border-color:var(--accent);}
+
+/* History */
+#history-scroll{flex:1;overflow-y:auto;padding:8px;}
+#history-scroll::-webkit-scrollbar{width:4px;}
+#history-scroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+.history-item{
+  padding:7px 9px;border-radius:8px;cursor:pointer;
+  font-size:.77rem;color:var(--muted);display:flex;align-items:center;gap:7px;
+  transition:all .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  border:1px solid transparent;
+}
+.history-item:hover{background:var(--surface2);color:var(--text);}
+.history-item.active{background:rgba(91,141,239,.1);border-color:rgba(91,141,239,.3);color:var(--text);}
+.history-del{
+  margin-left:auto;flex-shrink:0;opacity:0;color:var(--muted2);
+  font-size:.85rem;padding:0 3px;border-radius:3px;line-height:1;
+  transition:opacity .1s,color .1s;
+}
+.history-item:hover .history-del{opacity:1;}
+.history-del:hover{color:var(--danger);}
+
+/* ── Main ── */
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+
+#topbar{
+  padding:13px 22px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+}
+#topbar-title{font-size:.87rem;font-weight:500;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%;}
+#topbar-model{
+  font-size:.73rem;color:var(--accent);
+  background:rgba(91,141,239,.1);padding:3px 10px;
+  border-radius:20px;border:1px solid rgba(91,141,239,.22);white-space:nowrap;
+}
+
+/* Messages */
+#messages{
+  flex:1;overflow-y:auto;display:flex;flex-direction:column;
+  scroll-behavior:smooth;
+}
+#messages::-webkit-scrollbar{width:5px;}
+#messages::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+
+/* Welcome */
+#welcome{
+  flex:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:14px;padding:40px;text-align:center;
+}
+.w-icon{font-size:2.8rem;margin-bottom:4px;}
+.w-title{font-size:1.55rem;font-weight:600;letter-spacing:-.02em;}
+.w-sub{font-size:.88rem;color:var(--muted);max-width:380px;line-height:1.6;}
+.w-chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:6px;}
+.chip{
+  padding:7px 15px;border-radius:20px;font-size:.79rem;
+  background:var(--surface);border:1px solid var(--border2);
+  color:var(--muted);cursor:pointer;transition:all .15s;
+}
+.chip:hover{border-color:var(--accent);color:var(--text);background:rgba(91,141,239,.07);}
+
+/* Message rows */
+.msg-row{padding:16px 0;display:flex;animation:fadeUp .2s ease forwards;opacity:0;}
+.msg-row.user{background:var(--user-bg);}
+.msg-row.assistant{background:transparent;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:translateY(0);}}
+
+.msg-inner{max-width:760px;margin:0 auto;width:100%;padding:0 24px;display:flex;gap:13px;}
+.avatar{
+  width:30px;height:30px;border-radius:8px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px;
+}
+.avatar.user-av{background:linear-gradient(135deg,#3b5bdb,#5b8def);}
+.avatar.ai-av{background:linear-gradient(135deg,var(--accent),var(--accent2));}
+.msg-body{flex:1;min-width:0;}
+.msg-name{font-size:.72rem;font-weight:600;color:var(--muted);margin-bottom:5px;letter-spacing:.03em;text-transform:uppercase;}
+
+/* Rendered markdown */
+.msg-text{font-size:.92rem;line-height:1.78;color:var(--text);word-break:break-word;}
+.msg-text p{margin-bottom:.65em;}
+.msg-text p:last-child{margin-bottom:0;}
+.msg-text strong{color:#fff;font-weight:600;}
+.msg-text em{color:#c8c8e0;}
+.msg-text code{font-family:var(--mono);background:rgba(255,255,255,.07);border:1px solid var(--border2);border-radius:5px;padding:1px 6px;font-size:.81em;color:#b0d0ff;}
+.msg-text pre{background:#0a0a14;border:1px solid var(--border2);border-radius:10px;padding:15px;overflow-x:auto;margin:.75em 0;}
+.msg-text pre code{background:none;border:none;padding:0;font-size:.82em;color:#c8d8ff;}
+.msg-text ul,.msg-text ol{padding-left:1.4em;margin:.45em 0;}
+.msg-text li{margin-bottom:.28em;}
+.msg-text h1,.msg-text h2,.msg-text h3{color:#fff;font-weight:600;margin:1em 0 .4em;letter-spacing:-.01em;}
+.msg-text h1{font-size:1.22em;}
+.msg-text h2{font-size:1.08em;}
+.msg-text h3{font-size:1em;}
+.msg-text blockquote{border-left:3px solid var(--accent);padding-left:13px;color:var(--muted);margin:.6em 0;}
+.msg-text hr{border:none;border-top:1px solid var(--border);margin:1em 0;}
+.msg-text table{border-collapse:collapse;width:100%;margin:.75em 0;font-size:.84em;}
+.msg-text th{background:var(--surface2);padding:7px 11px;text-align:left;border:1px solid var(--border2);}
+.msg-text td{padding:6px 11px;border:1px solid var(--border);}
+.msg-text tr:nth-child(even) td{background:rgba(255,255,255,.02);}
+
+/* File chips */
+.file-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px;}
+.file-chip{
+  display:flex;align-items:center;gap:5px;
+  background:rgba(91,141,239,.09);border:1px solid rgba(91,141,239,.22);
+  border-radius:6px;padding:3px 9px;font-size:.74rem;color:var(--accent);font-family:var(--mono);
+}
+
+/* Cursor */
+.cursor{display:inline-block;width:6px;height:14px;background:var(--accent);border-radius:2px;animation:blink .7s infinite;vertical-align:middle;margin-left:2px;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0;}}
+
+/* ── Input area ── */
+#input-area{padding:14px 24px 18px;border-top:1px solid var(--border);flex-shrink:0;}
+#input-wrap{
+  max-width:760px;margin:0 auto;
+  background:var(--surface);border:1px solid var(--border2);
+  border-radius:var(--radius);transition:border-color .2s;overflow:hidden;
+}
+#input-wrap:focus-within{border-color:var(--accent);}
+
+#attached-preview{
+  display:none;flex-wrap:wrap;gap:6px;padding:10px 13px 0;
+}
+.att-chip{
+  display:flex;align-items:center;gap:5px;
+  background:rgba(91,141,239,.1);border:1px solid rgba(91,141,239,.28);
+  border-radius:7px;padding:4px 8px;font-size:.73rem;color:var(--accent);font-family:var(--mono);
+  max-width:200px;
+}
+.att-chip span.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.att-rm{cursor:pointer;color:var(--muted2);font-size:.9rem;flex-shrink:0;padding:0 2px;}
+.att-rm:hover{color:var(--danger);}
+
+#msg-input{
+  width:100%;background:transparent;border:none;outline:none;
+  color:var(--text);font-family:var(--font);font-size:.91rem;
+  padding:13px 15px 9px;resize:none;line-height:1.6;
+  max-height:200px;overflow-y:auto;min-height:50px;
+}
+#msg-input::placeholder{color:var(--muted2);}
+
+#input-toolbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:5px 9px 8px;gap:8px;
+}
+.toolbar-left{display:flex;gap:3px;}
+.icon-btn{
+  width:31px;height:31px;border-radius:8px;border:none;
+  background:transparent;cursor:pointer;color:var(--muted);
+  display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.icon-btn:hover{background:var(--surface2);color:var(--text);}
+#file-input{display:none;}
+
+#send-btn{
+  width:33px;height:33px;border-radius:9px;border:none;
+  background:var(--accent);color:#fff;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .15s;flex-shrink:0;
+}
+#send-btn:hover{background:#4a7de0;}
+#send-btn:active{transform:scale(.92);}
+#send-btn:disabled{background:var(--border2);cursor:not-allowed;}
+#stop-btn{
+  width:33px;height:33px;border-radius:9px;border:1px solid var(--border2);
+  background:transparent;color:var(--muted);cursor:pointer;
+  display:none;align-items:center;justify-content:center;transition:all .15s;
+}
+#stop-btn:hover{border-color:var(--danger);color:var(--danger);}
+#stop-btn.show{display:flex;}
+
+/* Toast */
+#toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(16px);
+  background:var(--surface2);border:1px solid var(--border2);
+  border-radius:10px;padding:9px 17px;font-size:.81rem;
+  pointer-events:none;opacity:0;transition:all .22s;z-index:999;white-space:nowrap;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+#toast.err{border-color:rgba(240,96,96,.4);color:#f99;}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ── Sidebar ── -->
+<aside id="sidebar">
+  <div id="sidebar-header">
+    <div class="logo-mark">✦</div>
+    <div>
+      <div class="logo-text">UPC IA</div>
+    </div>
+  </div>
+
+  <button id="new-chat-btn" onclick="newChat()">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+    </svg>
+    Nueva conversación
+  </button>
+
+  <div class="sb-section">
+    <div class="sb-label">Modelo</div>
+    <select id="model-select" onchange="onModelChange()">
+      <option value="meta-llama/Llama-3.3-70B-Instruct">Llama 3.3 70B</option>
+      <option value="deepseek-ai/DeepSeek-V3.2">DeepSeek V3</option>
+      <option value="Qwen/Qwen3.5-397B-A17B-fast">Qwen 3.5 397B</option>
+      <option value="google/gemma-3-27b-it">Gemma 3 27B</option>
+      <option value="MiniMaxAI/MiniMax-M2.5-fast">MiniMax M2.5</option>
+    </select>
+  </div>
+
+  <div class="sb-section">
+    <div class="sb-label">Instrucción del sistema</div>
+    <textarea id="system-input" rows="3"
+      placeholder="Ej: Eres un asistente experto en análisis de documentos..."></textarea>
+  </div>
+
+  <div class="sb-section" style="border-bottom:none;">
+    <div class="sb-label">Historial</div>
+  </div>
+  <div id="history-scroll"></div>
+
+  <div style="padding:10px 14px;border-top:1px solid var(--border);margin-top:auto;">
+    <div style="font-size:.69rem;color:var(--muted2);text-align:center;line-height:1.6;">
+      API en <code style="color:var(--accent);font-family:var(--mono)">localhost:8000</code>
+    </div>
+  </div>
+</aside>
+
+<!-- ── Main ── -->
+<main id="main">
+  <div id="topbar">
+    <span id="topbar-title">Nueva conversación</span>
+    <span id="topbar-model">Qwen 3.5 397B</span>
+  </div>
+
+  <div id="messages">
+    <div id="welcome">
+      <div class="w-icon">✦</div>
+      <div class="w-title">¿En qué puedo ayudarte?</div>
+      <div class="w-sub">Chatea con modelos open-source.<br>Adjunta PDFs, DOCX y archivos de texto.</div>
+      <div class="w-chips">
+        <div class="chip" onclick="quickPrompt('Analiza este documento y dame un resumen ejecutivo')">📄 Analizar documento</div>
+        <div class="chip" onclick="quickPrompt('Evalúa si este trabajo cumple con la rúbrica adjunta y sugiere mejoras')">📋 Evaluar con rúbrica</div>
+        <div class="chip" onclick="quickPrompt('Extrae los puntos más importantes de los archivos adjuntos')">🔍 Extraer puntos clave</div>
+        <div class="chip" onclick="quickPrompt('Compara los dos documentos adjuntos y señala diferencias')">⚖️ Comparar documentos</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="input-area">
+    <div id="input-wrap">
+      <div id="attached-preview"></div>
+      <textarea id="msg-input" rows="1"
+        placeholder="Escribe un mensaje… (Shift+Enter = nueva línea)"
+        oninput="autoResize(this)"
+        onkeydown="handleKey(event)"></textarea>
+      <div id="input-toolbar">
+        <div class="toolbar-left">
+          <button class="icon-btn" title="Adjuntar archivos" onclick="document.getElementById('file-input').click()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+          </button>
+          <input type="file" id="file-input" multiple
+            accept=".pdf,.txt,.md,.docx,.doc,.csv,.json,.py,.js,.ts,.html,.xml,.yaml,.sh,.sql"
+            onchange="handleFiles(this.files); this.value=''"/>
+          <button class="icon-btn" title="Limpiar conversación" onclick="clearChat()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+            </svg>
+          </button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="stop-btn" title="Detener" onclick="stopGeneration()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2"/>
+            </svg>
+          </button>
+          <button id="send-btn" title="Enviar (Enter)" onclick="sendMessage()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:7px;font-size:.69rem;color:var(--muted2);">
+      Los archivos se procesan en el servidor y se envían como texto al modelo.
+    </div>
+  </div>
+</main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// ESTADO DE LA APLICACIÓN
+// ═══════════════════════════════════════════════════════
+
+// messages: historial de la conversación ACTUAL
+// Cada item: { role: 'user'|'assistant', content: string, fileNames?: string[] }
+let messages = [];
+
+// Archivos pendientes de adjuntar en el próximo envío
+let pendingFiles = [];
+
+// ID de la conversación activa en el historial guardado (null = nueva)
+let currentChatId = null;
+
+// Streaming
+let isStreaming    = false;
+let abortCtrl      = null;
+
+// Historial persistido en localStorage
+// Cada item: { id, title, messages, model, systemPrompt, ts }
+let savedChats = JSON.parse(localStorage.getItem('nebius_chats') || '[]');
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+renderHistoryList();
+updateTopbar();
+
+// ═══════════════════════════════════════════════════════
+// UTILIDADES UI
+// ═══════════════════════════════════════════════════════
+function toast(msg, isErr = false, ms = 3000) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.className = '', ms);
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+function scrollBottom() {
+  const el = document.getElementById('messages');
+  el.scrollTop = el.scrollHeight;
+}
+
+function onModelChange() { updateTopbar(); }
+
+function updateTopbar() {
+  const sel = document.getElementById('model-select');
+  const label = sel.options[sel.selectedIndex]?.text || '';
+  document.getElementById('topbar-model').textContent = label;
+}
+
+function quickPrompt(text) {
+  const el = document.getElementById('msg-input');
+  el.value = text;
+  autoResize(el);
+  el.focus();
+}
+
+function fileIcon(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (ext === 'pdf') return '📕';
+  if (['docx','doc'].includes(ext)) return '📘';
+  if (['py','js','ts','jsx','tsx','sh','sql'].includes(ext)) return '💻';
+  if (['csv','json','yaml','xml'].includes(ext)) return '📊';
+  return '📄';
+}
+
+// ═══════════════════════════════════════════════════════
+// ARCHIVOS ADJUNTOS
+// ═══════════════════════════════════════════════════════
+function handleFiles(fileList) {
+  for (const f of fileList) {
+    if (!pendingFiles.find(x => x.name === f.name && x.size === f.size))
+      pendingFiles.push(f);
+  }
+  renderPendingFiles();
+}
+
+function removeFile(idx) {
+  pendingFiles.splice(idx, 1);
+  renderPendingFiles();
+}
+
+function renderPendingFiles() {
+  const wrap = document.getElementById('attached-preview');
+  if (!pendingFiles.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'flex';
+  wrap.innerHTML = pendingFiles.map((f, i) => `
+    <div class="att-chip">
+      ${fileIcon(f.name)}
+      <span class="name">${f.name}</span>
+      <span class="att-rm" onclick="removeFile(${i})">✕</span>
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDERIZAR MENSAJES
+// ═══════════════════════════════════════════════════════
+function renderMarkdown(text) {
+  // Escapar HTML primero
+  let h = text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // Bloques de código (antes que inline)
+  h = h.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
+    `<pre><code class="lang-${lang}">${code.trim()}</code></pre>`);
+
+  // Inline code
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+  // Headers
+  h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  h = h.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
+  h = h.replace(/^# (.+)$/gm,   '<h1>$1</h1>');
+
+  // Bold / italic
+  h = h.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  h = h.replace(/\*\*(.+?)\*\*/g,     '<strong>$1</strong>');
+  h = h.replace(/\*(.+?)\*/g,         '<em>$1</em>');
+
+  // Blockquote
+  h = h.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+
+  // HR
+  h = h.replace(/^---$/gm, '<hr/>');
+
+  // Listas (convertir líneas consecutivas en <ul>)
+  h = h.replace(/((?:^(?:\* |- |\d+\. ).+\n?)+)/gm, block => {
+    const items = block.trim().split('\n').map(line =>
+      `<li>${line.replace(/^(?:\* |- |\d+\. )/, '').trim()}</li>`).join('');
+    return `<ul>${items}</ul>`;
+  });
+
+  // Párrafos: separar por doble newline
+  const parts = h.split(/\n\n+/);
+  h = parts.map(p => {
+    p = p.trim();
+    if (!p) return '';
+    if (/^<(h[1-3]|pre|blockquote|hr|ul|ol|table)/.test(p)) return p;
+    return `<p>${p.replace(/\n/g, '<br/>')}</p>`;
+  }).join('\n');
+
+  return h;
+}
+
+function appendMessage(role, content, fileNames = []) {
+  // Quitar welcome screen si existe
+  const welcome = document.getElementById('welcome');
+  if (welcome) welcome.remove();
+
+  const container = document.getElementById('messages');
+  const row = document.createElement('div');
+  row.className = `msg-row ${role}`;
+
+  const isUser = role === 'user';
+  const fchips = fileNames.length
+    ? `<div class="file-chips">${fileNames.map(n => `<span class="file-chip">${fileIcon(n)} ${n}</span>`).join('')}</div>`
+    : '';
+
+  row.innerHTML = `
+    <div class="msg-inner">
+      <div class="avatar ${isUser ? 'user-av' : 'ai-av'}">${isUser ? '👤' : '✦'}</div>
+      <div class="msg-body">
+        <div class="msg-name">${isUser ? 'Tú' : 'UPC IA'}</div>
+        ${fchips}
+        <div class="msg-text">${content ? renderMarkdown(content) : ''}</div>
+      </div>
+    </div>`;
+
+  container.appendChild(row);
+  scrollBottom();
+  return row.querySelector('.msg-text');
+}
+
+// ═══════════════════════════════════════════════════════
+// ENVIAR MENSAJE
+// ═══════════════════════════════════════════════════════
+async function sendMessage() {
+  if (isStreaming) return;
+
+  const inputEl     = document.getElementById('msg-input');
+  const text        = inputEl.value.trim();
+  const filesToSend = [...pendingFiles];
+
+  // Debe tener texto o archivos
+  if (!text && !filesToSend.length) return;
+
+  const model        = document.getElementById('model-select').value;
+  const systemPrompt = document.getElementById('system-input').value.trim();
+  const fileNames    = filesToSend.map(f => f.name);
+
+  // ── Limpiar input ──
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  pendingFiles = [];
+  renderPendingFiles();
+
+  // ── Mostrar mensaje del usuario ──
+  // El contenido que guardamos en el historial es solo el texto (sin los archivos
+  // ya que esos se mandan al backend en cada petición y no tiene sentido guardar raw bytes)
+  const displayText = text || (fileNames.length ? `[${fileNames.join(', ')}]` : '');
+  appendMessage('user', displayText, fileNames);
+
+  // Agregar al historial de mensajes de la conversación actual
+  messages.push({ role: 'user', content: displayText, fileNames });
+
+  // ── Placeholder del asistente ──
+  const aiEl = appendMessage('assistant', '');
+  aiEl.innerHTML = '<span class="cursor"></span>';
+
+  // ── Controles de streaming ──
+  isStreaming = true;
+  abortCtrl   = new AbortController();
+  document.getElementById('send-btn').disabled = true;
+  document.getElementById('stop-btn').classList.add('show');
+
+  // ── Construir FormData ──
+  // El historial que mandamos al back es SOLO los mensajes previos al actual
+  // (el backend agrega el mensaje actual por su cuenta)
+  const historyToSend = messages
+    .slice(0, -1)  // excluir el que acabamos de agregar
+    .map(m => ({ role: m.role, content: m.content }));
+
+  const fd = new FormData();
+  fd.append('message', text);
+  fd.append('history', JSON.stringify(historyToSend));
+  fd.append('model', model);
+  fd.append('stream', 'true');
+  fd.append('temperature', '0.7');
+  fd.append('max_tokens', '4096');
+  if (systemPrompt) fd.append('system_prompt', systemPrompt);
+  for (const f of filesToSend) fd.append('files', f);
+
+  let fullResponse = '';
+
+  try {
+    const resp = await fetch('/api/chat/with-files', {
+      method: 'POST',
+      body: fd,
+      signal: abortCtrl.signal,
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err?.detail || `HTTP ${resp.status}`);
+    }
+
+    // Leer SSE stream
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // retener línea incompleta
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const raw = trimmed.slice(5).trim();
+        if (raw === '[DONE]') continue;
+        if (raw.startsWith('[ERROR]')) throw new Error(raw.slice(7).trim());
+
+        try {
+          const chunk = JSON.parse(raw);
+          const delta = chunk?.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            fullResponse += delta;
+            aiEl.innerHTML = renderMarkdown(fullResponse) + '<span class="cursor"></span>';
+            scrollBottom();
+          }
+        } catch { /* chunk incompleto, ignorar */ }
+      }
+    }
+
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      fullResponse = fullResponse || '[Generación detenida por el usuario]';
+    } else {
+      fullResponse = `⚠️ Error: ${err.message}`;
+      toast('❌ ' + err.message, true, 5000);
+    }
+  }
+
+  // ── Finalizar ──
+  aiEl.innerHTML = renderMarkdown(fullResponse || '(sin respuesta)');
+
+  // Guardar respuesta en el historial local
+  messages.push({ role: 'assistant', content: fullResponse });
+
+  // Persistir / actualizar conversación
+  persistChat(model, systemPrompt);
+
+  // Reset controles
+  isStreaming = false;
+  abortCtrl   = null;
+  document.getElementById('send-btn').disabled = false;
+  document.getElementById('stop-btn').classList.remove('show');
+  scrollBottom();
+}
+
+function stopGeneration() {
+  if (abortCtrl) abortCtrl.abort();
+}
+
+// ═══════════════════════════════════════════════════════
+// PERSISTENCIA DEL HISTORIAL
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Guarda o actualiza la conversación activa en savedChats.
+ * Si currentChatId existe → actualiza el item.
+ * Si es nueva → crea uno nuevo y asigna currentChatId.
+ */
+function persistChat(model, systemPrompt) {
+  if (!messages.length) return;
+
+  const firstUserMsg = messages.find(m => m.role === 'user')?.content || 'Conversación';
+  const title = firstUserMsg.slice(0, 45) + (firstUserMsg.length > 45 ? '…' : '');
+
+  if (currentChatId) {
+    // Actualizar conversación existente
+    const idx = savedChats.findIndex(c => c.id === currentChatId);
+    if (idx !== -1) {
+      savedChats[idx] = {
+        ...savedChats[idx],
+        title,
+        messages: [...messages],
+        model,
+        systemPrompt,
+        ts: Date.now(),
+      };
+    }
+  } else {
+    // Nueva conversación
+    currentChatId = Date.now();
+    savedChats.unshift({
+      id: currentChatId,
+      title,
+      messages: [...messages],
+      model,
+      systemPrompt,
+      ts: Date.now(),
+    });
+    if (savedChats.length > 60) savedChats.splice(60);
+  }
+
+  localStorage.setItem('nebius_chats', JSON.stringify(savedChats));
+  renderHistoryList();
+
+  // Actualizar título del topbar
+  document.getElementById('topbar-title').textContent = title;
+}
+
+function renderHistoryList() {
+  const list = document.getElementById('history-scroll');
+  if (!savedChats.length) {
+    list.innerHTML = '<div style="font-size:.74rem;color:var(--muted2);padding:8px 10px;">Sin historial aún</div>';
+    return;
+  }
+  list.innerHTML = savedChats.map(c => `
+    <div class="history-item ${c.id === currentChatId ? 'active' : ''}"
+         onclick="loadChat(${c.id})">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:.5;">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      <span style="overflow:hidden;text-overflow:ellipsis;flex:1;">${escHtml(c.title)}</span>
+      <span class="history-del" onclick="deleteChat(event,${c.id})">✕</span>
+    </div>`).join('');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function loadChat(id) {
+  if (isStreaming) return;
+  const chat = savedChats.find(c => c.id === id);
+  if (!chat) return;
+
+  // Restaurar estado
+  currentChatId = id;
+  messages      = chat.messages.map(m => ({ ...m }));
+
+  // Restaurar config del sidebar
+  const sel = document.getElementById('model-select');
+  if (chat.model) {
+    // Intentar seleccionar el modelo guardado
+    const opt = [...sel.options].find(o => o.value === chat.model);
+    if (opt) sel.value = chat.model;
+  }
+  if (chat.systemPrompt !== undefined) {
+    document.getElementById('system-input').value = chat.systemPrompt || '';
+  }
+
+  updateTopbar();
+  document.getElementById('topbar-title').textContent = chat.title;
+
+  // Renderizar mensajes
+  const container = document.getElementById('messages');
+  container.innerHTML = '';
+  for (const m of messages) {
+    appendMessage(m.role, m.content, m.fileNames || []);
+  }
+
+  renderHistoryList(); // actualizar .active
+  scrollBottom();
+}
+
+function deleteChat(e, id) {
+  e.stopPropagation();
+  savedChats = savedChats.filter(c => c.id !== id);
+  localStorage.setItem('nebius_chats', JSON.stringify(savedChats));
+  if (currentChatId === id) newChat();
+  else renderHistoryList();
+}
+
+// ═══════════════════════════════════════════════════════
+// NUEVA CONVERSACIÓN / LIMPIAR
+// ═══════════════════════════════════════════════════════
+function newChat() {
+  if (isStreaming) return;
+  messages      = [];
+  pendingFiles  = [];
+  currentChatId = null;
+  renderPendingFiles();
+
+  const container = document.getElementById('messages');
+  container.innerHTML = `
+    <div id="welcome">
+      <div class="w-icon">✦</div>
+      <div class="w-title">¿En qué puedo ayudarte?</div>
+      <div class="w-sub">Chatea con modelos open-source.<br>Adjunta PDFs, DOCX y archivos de texto.</div>
+      <div class="w-chips">
+        <div class="chip" onclick="quickPrompt('Analiza este documento y dame un resumen ejecutivo')">📄 Analizar documento</div>
+        <div class="chip" onclick="quickPrompt('Evalúa si este trabajo cumple con la rúbrica adjunta y sugiere mejoras')">📋 Evaluar con rúbrica</div>
+        <div class="chip" onclick="quickPrompt('Extrae los puntos más importantes de los archivos adjuntos')">🔍 Extraer puntos clave</div>
+        <div class="chip" onclick="quickPrompt('Compara los dos documentos adjuntos y señala diferencias')">⚖️ Comparar documentos</div>
+      </div>
+    </div>`;
+
+  document.getElementById('topbar-title').textContent = 'Nueva conversación';
+  renderHistoryList();
+}
+
+function clearChat() {
+  if (!messages.length && !pendingFiles.length) return;
+  if (confirm('¿Limpiar la conversación actual?')) newChat();
+}
+</script>
+</body>
+</html>
