@@ -16,15 +16,41 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-NEBIUS_API_KEY  = os.getenv("NEBIUS_API_KEY", "")
-NEBIUS_BASE_URL = "https://api.tokenfactory.nebius.com/v1"
-DEFAULT_MODEL   = os.getenv("NEBIUS_MODEL", "meta-llama/Llama-3.3-70B-Instruct")
+# ──────────────────────────────────────────────────────────────
+# Provider registry
+# ──────────────────────────────────────────────────────────────
+
+PROVIDERS: dict[str, dict] = {
+    "nebius": {
+        "name": "Nebius",
+        "base_url": "https://api.tokenfactory.nebius.com/v1",
+        "api_key": os.getenv("NEBIUS_API_KEY", ""),
+    },
+    "openrouter": {
+        "name": "OpenRouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key": os.getenv("OPENROUTER_API_KEY", ""),
+    },
+}
+
+DEFAULT_PROVIDER = "nebius"
+DEFAULT_MODEL    = os.getenv("NEBIUS_MODEL", "meta-llama/Llama-3.3-70B-Instruct")
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "20"))
+
+
+def get_provider(provider_id: str) -> dict:
+    p = PROVIDERS.get(provider_id)
+    if not p:
+        raise HTTPException(400, f"Proveedor desconocido: {provider_id!r}")
+    if not p["api_key"]:
+        raise HTTPException(503, f"API key de {p['name']} no configurada en el servidor")
+    return p
+
 
 # ──────────────────────────────────────────────────────────────
 # App
 # ──────────────────────────────────────────────────────────────
-app = FastAPI(title="UPC ABET API", version="2.0.0")
+app = FastAPI(title="UPC ABET API", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -90,6 +116,7 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[Message]
     model: Optional[str]         = None
+    provider: str                = DEFAULT_PROVIDER
     stream: bool                 = True
     temperature: float           = 0.7
     max_tokens: int              = 4096
@@ -98,10 +125,6 @@ class ChatRequest(BaseModel):
 # ──────────────────────────────────────────────────────────────
 # Helpers internos
 # ──────────────────────────────────────────────────────────────
-
-def _check_key() -> None:
-    if not NEBIUS_API_KEY:
-        raise HTTPException(503, "NEBIUS_API_KEY no configurada en el servidor")
 
 def _build_payload(messages: list[dict], model: str, stream: bool,
                    temperature: float, max_tokens: int) -> dict:
@@ -113,16 +136,15 @@ def _build_payload(messages: list[dict], model: str, stream: bool,
         "max_tokens": max_tokens,
     }
 
-async def _stream_nebius(payload: dict) -> AsyncIterator[str]:
-    """Proxea el stream SSE de Nebius al cliente."""
+async def _stream_provider(payload: dict, base_url: str, api_key: str) -> AsyncIterator[str]:
     headers = {
-        "Authorization": f"Bearer {NEBIUS_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     async with httpx.AsyncClient(timeout=120) as client:
         async with client.stream(
             "POST",
-            f"{NEBIUS_BASE_URL}/chat/completions",
+            f"{base_url}/chat/completions",
             headers=headers,
             json=payload,
         ) as resp:
@@ -131,17 +153,17 @@ async def _stream_nebius(payload: dict) -> AsyncIterator[str]:
                 yield f"data: [ERROR] {body.decode(errors='replace')}\n\n"
                 return
             async for raw_line in resp.aiter_lines():
-                if raw_line:          # saltar líneas vacías
+                if raw_line:
                     yield f"{raw_line}\n\n"
 
-async def _call_nebius_sync(payload: dict) -> dict:
+async def _call_provider_sync(payload: dict, base_url: str, api_key: str) -> dict:
     headers = {
-        "Authorization": f"Bearer {NEBIUS_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(
-            f"{NEBIUS_BASE_URL}/chat/completions",
+            f"{base_url}/chat/completions",
             headers=headers,
             json=payload,
         )
@@ -159,86 +181,91 @@ async def _call_nebius_sync(payload: dict) -> dict:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "model": DEFAULT_MODEL, "key_set": bool(NEBIUS_API_KEY)}
+    return {
+        "status": "ok",
+        "model": DEFAULT_MODEL,
+        "providers": {k: bool(v["api_key"]) for k, v in PROVIDERS.items()},
+    }
+
+
+@app.get("/api/providers")
+def list_providers():
+    """Lista los proveedores disponibles y si tienen API key configurada."""
+    return [
+        {"id": pid, "name": p["name"], "configured": bool(p["api_key"])}
+        for pid, p in PROVIDERS.items()
+    ]
 
 
 @app.get("/api/models")
-async def list_models():
-    """Lista modelos disponibles en Nebius Token Factory."""
-    _check_key()
+async def list_models(provider: str = DEFAULT_PROVIDER):
+    """Lista modelos del proveedor dado, normalizados con campo is_free."""
+    p = get_provider(provider)
+
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.get(
-            f"{NEBIUS_BASE_URL}/models",
-            headers={"Authorization": f"Bearer {NEBIUS_API_KEY}"},
+            f"{p['base_url']}/models",
+            headers={"Authorization": f"Bearer {p['api_key']}"},
         )
     if r.status_code != 200:
         raise HTTPException(r.status_code, r.text)
-    return r.json()
+
+    raw = r.json()
+    # Both Nebius and OpenRouter return {"data": [...]}
+    items = raw.get("data", raw) if isinstance(raw, dict) else raw
+
+    normalized = []
+    for m in items:
+        model_id   = m.get("id", "")
+        model_name = m.get("name") or m.get("id", "")
+        if provider == "openrouter":
+            pricing = m.get("pricing", {})
+            prompt_price = pricing.get("prompt", "1")
+            is_free = str(prompt_price) == "0"
+        else:
+            is_free = False
+        normalized.append({"id": model_id, "name": model_name, "is_free": is_free})
+
+    normalized.sort(key=lambda x: x["name"].lower())
+    return normalized
 
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
-    """
-    Chat JSON puro sin archivos.
+    p = get_provider(req.provider)
 
-    Body:
-        {
-            "messages": [{"role": "user", "content": "Hola!"}],
-            "stream": true,
-            "system_prompt": "Eres un experto en análisis legal."
-        }
-    """
-    _check_key()
-
-    nebius_messages = []
+    provider_messages = []
     if req.system_prompt:
-        nebius_messages.append({"role": "system", "content": req.system_prompt})
-    nebius_messages += [m.model_dump() for m in req.messages]
+        provider_messages.append({"role": "system", "content": req.system_prompt})
+    provider_messages += [m.model_dump() for m in req.messages]
 
     payload = _build_payload(
-        nebius_messages, req.model or DEFAULT_MODEL,
+        provider_messages, req.model or DEFAULT_MODEL,
         req.stream, req.temperature, req.max_tokens,
     )
 
     if req.stream:
         return StreamingResponse(
-            _stream_nebius(payload), media_type="text/event-stream",
+            _stream_provider(payload, p["base_url"], p["api_key"]),
+            media_type="text/event-stream",
             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
         )
-    return await _call_nebius_sync(payload)
+    return await _call_provider_sync(payload, p["base_url"], p["api_key"])
 
 
 @app.post("/api/chat/with-files")
 async def chat_with_files(
-    message: str                  = Form(default=""),          # opcional: puede mandarse solo archivos
-    history: str                  = Form(default="[]"),        # JSON: historial completo de la sesión
+    message: str                  = Form(default=""),
+    history: str                  = Form(default="[]"),
     model: Optional[str]          = Form(default=None),
+    provider: str                 = Form(default=DEFAULT_PROVIDER),
     system_prompt: Optional[str]  = Form(default=None),
     temperature: float            = Form(default=0.7),
     max_tokens: int               = Form(default=4096),
     stream: bool                  = Form(default=True),
     files: list[UploadFile]       = File(default=[]),
 ):
-    """
-    Chat multipart con archivos opcionales.
-    Acepta mensaje vacío si se adjuntan archivos.
-    El cliente debe enviar el historial completo en cada petición.
-
-    Ejemplo Python:
-        requests.post(
-            "http://localhost:8000/api/chat/with-files",
-            data={
-                "message": "Analiza estos archivos",
-                "history": json.dumps([
-                    {"role": "user",      "content": "Hola"},
-                    {"role": "assistant", "content": "¿En qué te ayudo?"},
-                ]),
-                "stream": "false",
-            },
-            files=[("files", ("doc.pdf", open("doc.pdf","rb"), "application/pdf"))],
-        )
-    """
-    _check_key()
+    p = get_provider(provider)
 
     # ── Parsear y validar historial ──────────────────────────
     try:
@@ -283,24 +310,25 @@ async def chat_with_files(
 
     user_content = "\n\n".join(parts)
 
-    # ── Ensamblar mensajes para Nebius ───────────────────────
-    nebius_messages: list[dict] = []
+    # ── Ensamblar mensajes ───────────────────────────────────
+    provider_messages: list[dict] = []
     if system_prompt and system_prompt.strip():
-        nebius_messages.append({"role": "system", "content": system_prompt.strip()})
-    nebius_messages.extend(clean_history)
-    nebius_messages.append({"role": "user", "content": user_content})
+        provider_messages.append({"role": "system", "content": system_prompt.strip()})
+    provider_messages.extend(clean_history)
+    provider_messages.append({"role": "user", "content": user_content})
 
     payload = _build_payload(
-        nebius_messages, model or DEFAULT_MODEL,
+        provider_messages, model or DEFAULT_MODEL,
         stream, temperature, max_tokens,
     )
 
     if stream:
         return StreamingResponse(
-            _stream_nebius(payload), media_type="text/event-stream",
+            _stream_provider(payload, p["base_url"], p["api_key"]),
+            media_type="text/event-stream",
             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
         )
-    return await _call_nebius_sync(payload)
+    return await _call_provider_sync(payload, p["base_url"], p["api_key"])
 
 
 # ──────────────────────────────────────────────────────────────

@@ -48,12 +48,27 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 /* Sidebar sections */
 .sb-section{padding:10px 12px;border-bottom:1px solid var(--border);}
 .sb-label{font-size:.65rem;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;}
-#model-select{
+#provider-select,#model-select{
   width:100%;background:var(--surface2);border:1px solid var(--border2);
   color:var(--text);font-family:var(--font);font-size:.77rem;
   border-radius:8px;padding:7px 9px;cursor:pointer;outline:none;
 }
-#model-select:focus{border-color:var(--accent);}
+#provider-select:focus,#model-select:focus{border-color:var(--accent);}
+
+/* Free/paid filter */
+.model-filter{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap;}
+.model-filter label{
+  display:flex;align-items:center;gap:4px;font-size:.71rem;color:var(--muted);
+  cursor:pointer;padding:3px 8px;border-radius:6px;border:1px solid var(--border2);
+  transition:all .15s;
+}
+.model-filter label:hover{border-color:var(--accent);color:var(--text);}
+.model-filter input[type=radio]{display:none;}
+.model-filter input[type=radio]:checked + span{color:var(--accent);}
+.model-filter label:has(input:checked){border-color:var(--accent);background:rgba(91,141,239,.08);}
+
+/* Loading spinner for model list */
+.models-loading{font-size:.74rem;color:var(--muted2);padding:6px 2px;}
 #system-input{
   width:100%;background:var(--surface2);border:1px solid var(--border2);
   color:var(--text);font-family:var(--font);font-size:.76rem;
@@ -262,14 +277,22 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </button>
 
   <div class="sb-section">
+    <div class="sb-label">Proveedor</div>
+    <select id="provider-select" onchange="onProviderChange()">
+      <option value="">Cargando…</option>
+    </select>
+  </div>
+
+  <div class="sb-section">
     <div class="sb-label">Modelo</div>
     <select id="model-select" onchange="onModelChange()">
-      <option value="meta-llama/Llama-3.3-70B-Instruct">Llama 3.3 70B</option>
-      <option value="deepseek-ai/DeepSeek-V3.2">DeepSeek V3</option>
-      <option value="Qwen/Qwen3.5-397B-A17B-fast">Qwen 3.5 397B</option>
-      <option value="google/gemma-3-27b-it">Gemma 3 27B</option>
-      <option value="MiniMaxAI/MiniMax-M2.5-fast">MiniMax M2.5</option>
+      <option value="">Selecciona un proveedor</option>
     </select>
+    <div class="model-filter" id="model-filter" style="display:none;">
+      <label><input type="radio" name="mf" value="all" checked onchange="filterModels(this.value)"><span>Todos</span></label>
+      <label><input type="radio" name="mf" value="free" onchange="filterModels(this.value)"><span>Gratis</span></label>
+      <label><input type="radio" name="mf" value="paid" onchange="filterModels(this.value)"><span>Pago</span></label>
+    </div>
   </div>
 
   <div class="sb-section">
@@ -363,29 +386,27 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 // ESTADO DE LA APLICACIÓN
 // ═══════════════════════════════════════════════════════
 
-// messages: historial de la conversación ACTUAL
-// Cada item: { role: 'user'|'assistant', content: string, fileNames?: string[] }
-let messages = [];
-
-// Archivos pendientes de adjuntar en el próximo envío
-let pendingFiles = [];
-
-// ID de la conversación activa en el historial guardado (null = nueva)
+let messages      = [];
+let pendingFiles  = [];
 let currentChatId = null;
+let isStreaming   = false;
+let abortCtrl     = null;
 
-// Streaming
-let isStreaming    = false;
-let abortCtrl      = null;
+// Todos los modelos cargados del proveedor actual (sin filtrar)
+let allModels = [];
 
 // Historial persistido en localStorage
-// Cada item: { id, title, messages, model, systemPrompt, ts }
+// Cada item: { id, title, messages, model, provider, systemPrompt, ts }
 let savedChats = JSON.parse(localStorage.getItem('nebius_chats') || '[]');
 
 // ═══════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════
-renderHistoryList();
-updateTopbar();
+(async () => {
+  await loadProviders();
+  renderHistoryList();
+  updateTopbar();
+})();
 
 // ═══════════════════════════════════════════════════════
 // UTILIDADES UI
@@ -412,11 +433,110 @@ function scrollBottom() {
   el.scrollTop = el.scrollHeight;
 }
 
+// ═══════════════════════════════════════════════════════
+// PROVEEDORES Y MODELOS
+// ═══════════════════════════════════════════════════════
+
+async function loadProviders(restoreProvider) {
+  const sel = document.getElementById('provider-select');
+  try {
+    const r = await fetch('/api/providers');
+    const providers = await r.json();
+    const configured = providers.filter(p => p.configured);
+    sel.innerHTML = configured.length
+      ? configured.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
+      : '<option value="">Sin proveedores configurados</option>';
+
+    if (restoreProvider) {
+      const opt = [...sel.options].find(o => o.value === restoreProvider);
+      if (opt) sel.value = restoreProvider;
+    }
+  } catch {
+    sel.innerHTML = '<option value="">Error cargando proveedores</option>';
+  }
+  await loadModels();
+}
+
+async function loadModels(restoreModel) {
+  const providerSel = document.getElementById('provider-select');
+  const modelSel   = document.getElementById('model-select');
+  const filterEl   = document.getElementById('model-filter');
+  const provider   = providerSel.value;
+
+  if (!provider) {
+    modelSel.innerHTML = '<option value="">Sin proveedor</option>';
+    filterEl.style.display = 'none';
+    return;
+  }
+
+  modelSel.innerHTML = '<option value="">Cargando modelos…</option>';
+  modelSel.disabled  = true;
+  filterEl.style.display = 'none';
+
+  try {
+    const r = await fetch(`/api/models?provider=${encodeURIComponent(provider)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    allModels = await r.json();
+
+    // Show filter only if provider has free/paid distinction
+    const hasFree = allModels.some(m => m.is_free);
+    filterEl.style.display = hasFree ? 'flex' : 'none';
+
+    // Reset filter to "all"
+    const radios = document.querySelectorAll('input[name="mf"]');
+    radios[0].checked = true;
+
+    renderModelOptions(allModels, restoreModel);
+  } catch (e) {
+    modelSel.innerHTML = `<option value="">Error: ${e.message}</option>`;
+    allModels = [];
+  } finally {
+    modelSel.disabled = false;
+  }
+}
+
+function renderModelOptions(models, restoreValue) {
+  const sel = document.getElementById('model-select');
+  if (!models.length) {
+    sel.innerHTML = '<option value="">Sin modelos disponibles</option>';
+    updateTopbar();
+    return;
+  }
+  sel.innerHTML = models.map(m => {
+    const label = m.name === m.id ? m.id : `${m.name}`;
+    const badge = m.is_free ? ' ✦' : '';
+    return `<option value="${m.id}">${label}${badge}</option>`;
+  }).join('');
+
+  if (restoreValue) {
+    const opt = [...sel.options].find(o => o.value === restoreValue);
+    if (opt) sel.value = restoreValue;
+  }
+  updateTopbar();
+}
+
+function filterModels(filter) {
+  let subset = allModels;
+  if (filter === 'free') subset = allModels.filter(m => m.is_free);
+  if (filter === 'paid') subset = allModels.filter(m => !m.is_free);
+  renderModelOptions(subset);
+}
+
+async function onProviderChange() {
+  // Reset filter
+  const radios = document.querySelectorAll('input[name="mf"]');
+  if (radios[0]) radios[0].checked = true;
+  await loadModels();
+}
+
 function onModelChange() { updateTopbar(); }
 
 function updateTopbar() {
-  const sel = document.getElementById('model-select');
-  const label = sel.options[sel.selectedIndex]?.text || '';
+  const mSel = document.getElementById('model-select');
+  const pSel = document.getElementById('provider-select');
+  const mLabel = mSel.options[mSel.selectedIndex]?.text || '';
+  const pLabel = pSel.options[pSel.selectedIndex]?.text || '';
+  const label = mLabel && pLabel ? `${pLabel} · ${mLabel}` : (mLabel || pLabel || '—');
   document.getElementById('topbar-model').textContent = label;
 }
 
@@ -557,6 +677,7 @@ async function sendMessage() {
   if (!text && !filesToSend.length) return;
 
   const model        = document.getElementById('model-select').value;
+  const provider     = document.getElementById('provider-select').value;
   const systemPrompt = document.getElementById('system-input').value.trim();
   const fileNames    = filesToSend.map(f => f.name);
 
@@ -596,6 +717,7 @@ async function sendMessage() {
   fd.append('message', text);
   fd.append('history', JSON.stringify(historyToSend));
   fd.append('model', model);
+  fd.append('provider', provider);
   fd.append('stream', 'true');
   fd.append('temperature', '0.7');
   fd.append('max_tokens', '4096');
@@ -664,7 +786,7 @@ async function sendMessage() {
   messages.push({ role: 'assistant', content: fullResponse });
 
   // Persistir / actualizar conversación
-  persistChat(model, systemPrompt);
+  persistChat(model, provider, systemPrompt);
 
   // Reset controles
   isStreaming = false;
@@ -687,14 +809,13 @@ function stopGeneration() {
  * Si currentChatId existe → actualiza el item.
  * Si es nueva → crea uno nuevo y asigna currentChatId.
  */
-function persistChat(model, systemPrompt) {
+function persistChat(model, provider, systemPrompt) {
   if (!messages.length) return;
 
   const firstUserMsg = messages.find(m => m.role === 'user')?.content || 'Conversación';
   const title = firstUserMsg.slice(0, 45) + (firstUserMsg.length > 45 ? '…' : '');
 
   if (currentChatId) {
-    // Actualizar conversación existente
     const idx = savedChats.findIndex(c => c.id === currentChatId);
     if (idx !== -1) {
       savedChats[idx] = {
@@ -702,18 +823,19 @@ function persistChat(model, systemPrompt) {
         title,
         messages: [...messages],
         model,
+        provider,
         systemPrompt,
         ts: Date.now(),
       };
     }
   } else {
-    // Nueva conversación
     currentChatId = Date.now();
     savedChats.unshift({
       id: currentChatId,
       title,
       messages: [...messages],
       model,
+      provider,
       systemPrompt,
       ts: Date.now(),
     });
@@ -723,7 +845,6 @@ function persistChat(model, systemPrompt) {
   localStorage.setItem('nebius_chats', JSON.stringify(savedChats));
   renderHistoryList();
 
-  // Actualizar título del topbar
   document.getElementById('topbar-title').textContent = title;
 }
 
@@ -748,7 +869,7 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function loadChat(id) {
+async function loadChat(id) {
   if (isStreaming) return;
   const chat = savedChats.find(c => c.id === id);
   if (!chat) return;
@@ -757,13 +878,24 @@ function loadChat(id) {
   currentChatId = id;
   messages      = chat.messages.map(m => ({ ...m }));
 
-  // Restaurar config del sidebar
-  const sel = document.getElementById('model-select');
-  if (chat.model) {
-    // Intentar seleccionar el modelo guardado
-    const opt = [...sel.options].find(o => o.value === chat.model);
-    if (opt) sel.value = chat.model;
+  // Restaurar proveedor y modelo
+  if (chat.provider) {
+    const pSel = document.getElementById('provider-select');
+    const pOpt = [...pSel.options].find(o => o.value === chat.provider);
+    if (pOpt && pSel.value !== chat.provider) {
+      pSel.value = chat.provider;
+      await loadModels(chat.model);
+    } else {
+      const mSel = document.getElementById('model-select');
+      const mOpt = [...mSel.options].find(o => o.value === chat.model);
+      if (mOpt) mSel.value = chat.model;
+    }
+  } else if (chat.model) {
+    const mSel = document.getElementById('model-select');
+    const mOpt = [...mSel.options].find(o => o.value === chat.model);
+    if (mOpt) mSel.value = chat.model;
   }
+
   if (chat.systemPrompt !== undefined) {
     document.getElementById('system-input').value = chat.systemPrompt || '';
   }
